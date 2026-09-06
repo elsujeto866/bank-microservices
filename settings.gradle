@@ -13,13 +13,13 @@ dependencyResolutionManagement {
     // Modules are forbidden from declaring their own repositories. Every
     // artifact in this build resolves through the repositories listed here —
     // that is a supply-chain control, not a style preference.
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
     repositories {
         mavenCentral()
     }
 }
 
-rootProject.name = "bank-microservices"
+rootProject.name = 'bank-microservices'
 
 // -----------------------------------------------------------------------------
 // The module graph IS the architecture.
@@ -34,12 +34,10 @@ rootProject.name = "bank-microservices"
 // Because these are separate compilation units, a violation is not a code
 // review comment — it is a compiler error.
 // -----------------------------------------------------------------------------
-include(
-    ":services:customer-service:domain",
-    ":services:customer-service:application",
-    ":services:customer-service:infrastructure",
+include ':services:customer-service:domain'
+include ':services:customer-service:application'
+include ':services:customer-service:infrastructure'
 
-    ":services:account-service:domain",
-    ":services:account-service:application",
-    ":services:account-service:infrastructure",
-)
+include ':services:account-service:domain'
+include ':services:account-service:application'
+include ':services:account-service:infrastructure'

@@ -1,0 +1,76 @@
+// =============================================================================
+// Domain module conventions — the innermost ring of the hexagon.
+//
+// The domain holds business rules and nothing else: no Spring, no JPA, no
+// Kafka, no HTTP, no JSON. It must be compilable and testable with a bare JVM.
+//
+// That rule is not documentation here. It is a build failure.
+// =============================================================================
+
+import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+plugins {
+    id 'bank.java-conventions'
+}
+
+def libs = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+dependencies {
+    testImplementation platform(libs.findLibrary('spring-boot-bom').get())
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// -----------------------------------------------------------------------------
+// Architectural fitness function.
+//
+// Resolves this module's RUNTIME classpath and fails the build if any framework
+// or infrastructure library leaked in. A developer cannot "just add" an
+// @Autowired to the domain to make something work — `./gradlew check` stops it
+// before the pull request is ever opened.
+// -----------------------------------------------------------------------------
+def forbiddenGroupPrefixes = [
+    'org.springframework',
+    'jakarta.persistence',
+    'jakarta.servlet',
+    'org.hibernate',
+    'org.apache.kafka',
+    'com.fasterxml.jackson',
+    'io.projectreactor',
+]
+
+def runtimeArtifacts = configurations.named('runtimeClasspath')
+        .flatMap { it.incoming.artifacts.resolvedArtifacts }
+
+def verifyDomainPurity = tasks.register('verifyDomainPurity') {
+    group = 'verification'
+    description = 'Fails if the domain module depends on any framework or infrastructure library.'
+
+    def artifacts = runtimeArtifacts
+    def forbidden = forbiddenGroupPrefixes
+    def modulePath = project.path
+
+    doLast {
+        def violations = artifacts.get()
+                .collect { it.id.componentIdentifier }
+                .findAll { it instanceof ModuleComponentIdentifier }
+                .findAll { component -> forbidden.any { component.group.startsWith(it) } }
+                .collect { "${it.group}:${it.module}:${it.version}" as String }
+                .unique()
+                .sort()
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("""\
+Architectural violation in ${modulePath}.
+The domain must stay free of frameworks, but these leaked onto its runtime classpath:
+${violations.collect { "  - $it" }.join('\n')}
+
+Move the offending code to the infrastructure module and talk to the domain through a port.
+""")
+        }
+    }
+}
+
+tasks.named('check') { dependsOn verifyDomainPurity }

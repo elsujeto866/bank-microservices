@@ -1,0 +1,12 @@
+plugins {
+    // Lets us write convention plugins as plain .gradle files under
+    // src/main/groovy, applied by id like any published plugin.
+    id 'groovy-gradle-plugin'
+}
+
+dependencies {
+    // Plugins we want to apply from inside our own convention plugins must be
+    // on buildSrc's compile classpath first.
+    implementation libs.springBoot.gradlePlugin
+    implementation libs.openapiGenerator.gradlePlugin
+}

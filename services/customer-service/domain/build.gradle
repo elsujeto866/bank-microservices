@@ -1,5 +1,5 @@
 plugins {
-    id("bank.domain-conventions")
+    id 'bank.domain-conventions'
 }
 
 // No dependencies. None. If this block ever grows, stop and ask why the

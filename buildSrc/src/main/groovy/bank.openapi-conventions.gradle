@@ -1,0 +1,143 @@
+// =============================================================================
+// Contract-first conventions.
+//
+// Generates Spring WebFlux API interfaces and DTOs from an OpenAPI document,
+// compiles them in their OWN source set, and puts the result on the main
+// classpath.
+//
+// The point is the direction of causality. A controller implements a GENERATED
+// interface, so if it drifts from the contract — a renamed path variable, a
+// changed status code, a different response type — the module does not
+// compile. Documentation cannot rot when the compiler is reading it.
+//
+// Generated code is written under build/ and is never committed. The
+// specification in contracts/ is the artifact; the Java is a derivative,
+// rebuilt on every build.
+//
+// A consuming module supplies the two things that vary:
+//
+//   openApiGenerate {
+//       inputSpec = "$rootDir/contracts/customer-service/openapi.yaml"
+//       apiPackage = 'com.bank.customer.infrastructure.rest.generated.api'
+//       modelPackage = 'com.bank.customer.infrastructure.rest.generated.model'
+//   }
+// =============================================================================
+
+plugins {
+    id 'bank.infrastructure-conventions'
+    id 'org.openapi.generator'
+}
+
+def generatedSourcesDir = layout.buildDirectory.dir('generated/openapi')
+
+openApiGenerate {
+    // The `spring` generator with `reactive = true` emits Mono/Flux signatures
+    // instead of blocking ones, which is what WebFlux needs.
+    generatorName = 'spring'
+    library = 'spring-boot'
+
+    outputDir = generatedSourcesDir.map { it.asFile.absolutePath }
+
+    // Fail the build on an invalid document. A specification that only *nearly*
+    // parses will silently generate a subtly wrong client for somebody.
+    validateSpec = true
+
+    configOptions = [
+        // Jakarta namespace and the Spring Boot 3+ code shape.
+        'useSpringBoot3'          : 'true',
+        'useJakartaEe'            : 'true',
+
+        // Mono<ResponseEntity<T>> rather than ResponseEntity<T>.
+        'reactive'                : 'true',
+
+        // Generate interfaces only. The generator can also emit controller
+        // classes; we do not want them. Our controllers are handwritten — they
+        // translate DTOs into domain types and call a use case, and that is
+        // exactly the code no generator should own.
+        'interfaceOnly'           : 'true',
+
+        // No `default` method bodies on the interfaces. With them, a method we
+        // forgot to implement silently returns 501 at runtime instead of
+        // failing to compile. We want the compiler to catch it.
+        'skipDefaultInterface'    : 'true',
+
+        // One interface per OpenAPI tag: CustomersApi, AccountsApi,
+        // MovementsApi, ReportsApi.
+        'useTags'                 : 'true',
+
+        // Bean Validation annotations (@NotNull, @Size, @Pattern) generated
+        // straight from the schema constraints. Input validation therefore
+        // derives from the contract instead of being retyped by hand and
+        // slowly drifting away from it.
+        'useBeanValidation'       : 'true',
+        'performBeanValidation'   : 'true',
+
+        // Avoid the JsonNullable wrapper. It exists to distinguish "field
+        // absent" from "field explicitly null", which we do not need, and it
+        // drags in an extra runtime dependency plus a Jackson module.
+        'openApiNullable'         : 'false',
+
+        // No Swagger annotations in the generated sources. The contract already
+        // lives in contracts/; duplicating it as annotations only creates a
+        // second place to disagree with.
+        'annotationLibrary'       : 'none',
+        'documentationProvider'   : 'none',
+
+        // Keep the output byte-for-byte stable between builds so Gradle's
+        // up-to-date checks and the build cache actually work. A generation
+        // timestamp in a header defeats both.
+        'hideGenerationTimestamp' : 'true',
+
+        'serializableModel'       : 'false',
+    ]
+}
+
+// -----------------------------------------------------------------------------
+// Generated code lives in its own source set.
+//
+// Two reasons, and the second is the important one:
+//
+// 1. It compiles under its own rules. The generator targets an older Spring
+//    nullability API and emits ~100 deprecation warnings per service. Left in
+//    `main`, that noise trains everyone to scroll past warnings — and the day a
+//    real one appears, nobody sees it. A build should only warn about code
+//    somebody can actually fix.
+//
+// 2. It is physically not `main`. Nobody can "just tweak" a generated file and
+//    have it survive: the next build overwrites it. The contract stays the only
+//    way to change the API.
+// -----------------------------------------------------------------------------
+def generated = sourceSets.create('generated') {
+    java.setSrcDirs([])
+    java.srcDir(generatedSourcesDir.map { it.dir('src/main/java') })
+}
+
+// The generated sources need the same dependencies main does — Spring, Jackson,
+// Bean Validation — so its configurations inherit from main's.
+configurations.named('generatedImplementation') {
+    extendsFrom configurations.getByName('implementation')
+}
+configurations.named('generatedCompileOnly') {
+    extendsFrom configurations.getByName('compileOnly')
+}
+
+tasks.named('compileGeneratedJava', JavaCompile) {
+    dependsOn tasks.named('openApiGenerate')
+    // Machine-written code, held to machine standards.
+    options.compilerArgs.removeIf { it.startsWith('-Xlint') }
+    options.compilerArgs.add('-Xlint:none')
+    options.warnings = false
+}
+
+// Hand the compiled output to main, to the tests, and to the packaged jar.
+sourceSets.named('main') {
+    compileClasspath += generated.output
+    runtimeClasspath += generated.output
+}
+sourceSets.named('test') {
+    compileClasspath += generated.output
+    runtimeClasspath += generated.output
+}
+tasks.named('jar', Jar) {
+    from generated.output
+}

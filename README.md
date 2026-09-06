@@ -75,7 +75,7 @@ for why the boundary is enforced by the build rather than by convention.
 | Web | Spring WebFlux | Required by the exercise |
 | Persistence | JPA / Hibernate on PostgreSQL | Required by the exercise — see the caveat below |
 | Messaging | Kafka (KRaft mode) | Retained, replayable log; read models can be rebuilt ([ADR-0005](docs/adr/0005-asynchronous-communication-with-kafka.md)) |
-| Build | Gradle 9.7.1 (Kotlin DSL) | Convention plugins in `buildSrc/`, version catalog, checksum-pinned wrapper |
+| Build | Gradle 9.7.1 (Groovy DSL) | Convention plugins in `buildSrc/`, version catalog, checksum-pinned wrapper |
 | Contracts | OpenAPI 3.0.3 + AsyncAPI 3.0 | Contract-first ([ADR-0006](docs/adr/0006-contract-first-api-design.md)) |
 
 **The WebFlux + JPA caveat.** The exercise mandates both, and they conflict: JPA
@@ -127,11 +127,12 @@ Tear it down with `docker compose down -v` (`-v` also drops the volumes).
 ```
 bank-microservices/
 ├── buildSrc/                       Convention plugins — the build's own rules
-│   └── src/main/kotlin/
-│       ├── bank.java-conventions.gradle.kts             Java 21, encoding, tests, Lombok
-│       ├── bank.domain-conventions.gradle.kts           + domain purity check
-│       ├── bank.application-conventions.gradle.kts      + application purity check
-│       └── bank.infrastructure-conventions.gradle.kts   frameworks allowed here
+│   └── src/main/groovy/
+│       ├── bank.java-conventions.gradle             Java 21, encoding, tests, Lombok
+│       ├── bank.domain-conventions.gradle           + domain purity check
+│       ├── bank.application-conventions.gradle      + application purity check
+│       ├── bank.infrastructure-conventions.gradle   frameworks allowed here
+│       └── bank.openapi-conventions.gradle          contract-first code generation
 ├── contracts/                      OpenAPI + AsyncAPI specifications
 ├── docs/adr/                       Architecture Decision Records
 ├── gradle/libs.versions.toml       Version catalog — one place for every version
@@ -139,7 +140,7 @@ bank-microservices/
 │   ├── customer-service/{domain,application,infrastructure}/
 │   └── account-service/{domain,application,infrastructure}/
 ├── compose.yaml                    Local infrastructure
-└── settings.gradle.kts             The module graph
+└── settings.gradle                 The module graph
 ```
 
 ---

@@ -7,10 +7,10 @@ dependencyResolutionManagement {
         mavenCentral()
     }
     versionCatalogs {
-        create("libs") {
-            from(files("../gradle/libs.versions.toml"))
+        libs {
+            from(files('../gradle/libs.versions.toml'))
         }
     }
 }
 
-rootProject.name = "buildSrc"
+rootProject.name = 'buildSrc'
