@@ -153,15 +153,17 @@ Built in reviewable stages, one pull request each.
 |---|---|---|
 | 0 | Foundation: build, module graph, fitness functions, ADRs, local infrastructure | ✅ |
 | 1 | Contract-first: OpenAPI + AsyncAPI, code generation | ✅ |
-| 2 | `customer-service` — domain and use cases (TDD) | ⬜ |
-| 3 | `customer-service` — adapters: REST, JPA, error handling | ⬜ |
-| 4 | `account-service` — domain and use cases (TDD), F2/F3 balance rules | ⬜ |
-| 5 | `account-service` — adapters | ⬜ |
-| 6 | Kafka: events, transactional outbox, idempotent consumer, DLQ | ⬜ |
-| 7 | F4 — account statement report (JSON and Excel) | ⬜ |
-| 8 | F6 — integration tests with Testcontainers, Karate DSL suite | ⬜ |
-| 9 | Resilience and observability: Resilience4j, Actuator, pool sizing, indexes | ⬜ |
-| 10 | F7 — Docker images, CI pipeline, mutation testing | ⬜ |
+| 1.5 | Migrate the build from the Kotlin DSL to the Groovy DSL | ✅ |
+| 2 | `customer-service` — domain model, test-first | ✅ |
+| 3 | `customer-service` — use cases and ports, test-first | ⬜ |
+| 4 | `customer-service` — adapters: REST, JPA, error handling | ⬜ |
+| 5 | `account-service` — domain and use cases (TDD), F2/F3 balance rules | ⬜ |
+| 6 | `account-service` — adapters | ⬜ |
+| 7 | Kafka: events, transactional outbox, idempotent consumer, DLQ | ⬜ |
+| 8 | F4 — account statement report (JSON and Excel) | ⬜ |
+| 9 | F6 — integration tests with Testcontainers, Karate DSL suite | ⬜ |
+| 10 | Resilience and observability: Resilience4j, Actuator, pool sizing, indexes | ⬜ |
+| 11 | F7 — Docker images, CI pipeline, mutation testing | ⬜ |
 
 The order is deliberate: **domain first, infrastructure last**. Starting from
 JPA entities produces a database schema wearing an architecture costume.
