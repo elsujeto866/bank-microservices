@@ -76,7 +76,7 @@ for why the boundary is enforced by the build rather than by convention.
 | Persistence | JPA / Hibernate on PostgreSQL | Required by the exercise — see the caveat below |
 | Messaging | Kafka (KRaft mode) | Retained, replayable log; read models can be rebuilt ([ADR-0005](docs/adr/0005-asynchronous-communication-with-kafka.md)) |
 | Build | Gradle 9.7.1 (Kotlin DSL) | Convention plugins in `buildSrc/`, version catalog, checksum-pinned wrapper |
-| Contracts | OpenAPI 3.1 + AsyncAPI | Contract-first ([ADR-0006](docs/adr/0006-contract-first-api-design.md)) |
+| Contracts | OpenAPI 3.0.3 + AsyncAPI 3.0 | Contract-first ([ADR-0006](docs/adr/0006-contract-first-api-design.md)) |
 
 **The WebFlux + JPA caveat.** The exercise mandates both, and they conflict: JPA
 is blocking, WebFlux is not. Every blocking persistence call is therefore
@@ -151,7 +151,7 @@ Built in reviewable stages, one pull request each.
 | # | Stage | Status |
 |---|---|---|
 | 0 | Foundation: build, module graph, fitness functions, ADRs, local infrastructure | ✅ |
-| 1 | Contract-first: OpenAPI + AsyncAPI, code generation | ⬜ |
+| 1 | Contract-first: OpenAPI + AsyncAPI, code generation | ✅ |
 | 2 | `customer-service` — domain and use cases (TDD) | ⬜ |
 | 3 | `customer-service` — adapters: REST, JPA, error handling | ⬜ |
 | 4 | `account-service` — domain and use cases (TDD), F2/F3 balance rules | ⬜ |

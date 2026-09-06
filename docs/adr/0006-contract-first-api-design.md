@@ -20,7 +20,12 @@ contract before it is already implemented.
 The specification is the source of truth and is written **before** the
 implementation.
 
-- REST contracts live in `contracts/` as OpenAPI 3.1 documents, one per service.
+- REST contracts live in `contracts/` as **OpenAPI 3.0.3** documents, one per
+  service. 3.1 is the better specification — it finally aligns with JSON Schema
+  — but tooling support for it is still uneven: `openapi-generator`, Karate and
+  several Postman import paths handle 3.0.x flawlessly and 3.1 partially. A
+  contract whose whole purpose is to be consumed by tools is not the place to
+  be early. Revisit when the generator's 3.1 support is complete.
 - Event contracts live beside them as an AsyncAPI document describing the Kafka
   topics and payloads.
 - The build runs `openapi-generator` to produce **server interfaces and DTOs**

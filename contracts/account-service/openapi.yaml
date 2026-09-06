@@ -1,0 +1,940 @@
+openapi: 3.0.3
+
+info:
+  title: Account Service API
+  version: 1.0.0
+  description: |
+    Manages accounts, movements and the account statement report.
+
+    ## Money is transported as a string
+
+    Every monetary amount in this contract is a **string**, never a JSON number.
+
+    JSON has one numeric type and most parsers back it with an IEEE-754 double.
+    `0.1 + 0.2` is `0.30000000000000004` there, and a balance that is off by
+    one ten-thousandth of a cent is a defect in a banking system, not a rounding
+    quirk. A string crosses the wire exactly as written and is parsed into a
+    `BigDecimal`-backed `Money` value object on arrival.
+
+    This is why the generated DTOs are deliberately *not* the domain model: the
+    mapping layer is where `"2000.00"` becomes `Money`.
+
+    ## Customer data is a local projection
+
+    This service holds its own read-only copy of customer data, built from the
+    `customer.events.v1` Kafka topic. It never calls `customer-service`
+    synchronously and never reads its database. See ADR-0004 and ADR-0005.
+
+    A consequence the caller must know about: a customer created moments ago
+    may not be visible here yet. Account creation for an unknown customer
+    fails with `422` and problem type `urn:bank:error:customer-not-found`.
+  contact:
+    name: Bank Platform Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8082
+    description: Local development
+
+tags:
+  - name: Accounts
+    description: Account lifecycle
+  - name: Movements
+    description: Deposits and withdrawals
+  - name: Reports
+    description: Account statement
+
+paths:
+
+  # ===========================================================================
+  # Accounts
+  # ===========================================================================
+
+  /api/v1/accounts:
+    get:
+      tags: [Accounts]
+      summary: List accounts
+      operationId: listAccounts
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: customerId
+          in: query
+          required: false
+          description: Restrict the result to one customer's accounts.
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: A page of accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags: [Accounts]
+      summary: Open an account
+      operationId: createAccount
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '201':
+          description: Account opened.
+          headers:
+            Location:
+              description: Absolute URI of the created account.
+              required: true
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: An account already exists with that account number.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            Business rule violation. Most commonly the customer is unknown to
+            this service (`urn:bank:error:customer-not-found`) or is inactive
+            (`urn:bank:error:customer-inactive`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/{accountId}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+
+    get:
+      tags: [Accounts]
+      summary: Retrieve an account
+      operationId: getAccount
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags: [Accounts]
+      summary: Replace an account
+      description: |
+        Replaces the mutable attributes of the account.
+
+        `balance` is intentionally **not** writable. A balance is the sum of
+        the account's movements, not an independent field — allowing it to be
+        set directly would let a caller create money out of nothing and leave
+        the ledger unable to explain itself. To change a balance, post a
+        movement.
+      operationId: replaceAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceAccountRequest'
+      responses:
+        '200':
+          description: Account replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The new account number collides with another account.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      tags: [Accounts]
+      summary: Partially update an account
+      operationId: updateAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+      responses:
+        '200':
+          description: Account updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags: [Accounts]
+      summary: Close an account
+      description: |
+        Closes the account. The record is retained: its movements are financial
+        history and must stay auditable (ADR-0007).
+      operationId: deleteAccount
+      responses:
+        '204':
+          description: Account closed. No body.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The account still holds a non-zero balance and cannot be closed.
+            Problem type `urn:bank:error:account-has-balance`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================================================
+  # Movements
+  # ===========================================================================
+
+  /api/v1/movements:
+    get:
+      tags: [Movements]
+      summary: List movements
+      operationId: listMovements
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on the movement timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on the movement timestamp.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: A page of movements, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags: [Movements]
+      summary: Register a movement
+      description: |
+        Applies a movement to an account and records the resulting balance.
+
+        - `CREDIT` adds to the available balance (a deposit).
+        - `DEBIT` subtracts from it (a withdrawal).
+        - `value` must be strictly greater than zero. Direction is carried by
+          `type`, never by the sign of the amount — allowing a negative
+          `CREDIT` would give two encodings for the same fact, and the second
+          one is always the one nobody handled.
+
+        A `DEBIT` larger than the available balance is rejected with `422` and
+        the detail `Saldo no disponible`.
+
+        `Idempotency-Key` is strongly recommended here. A retried deposit that
+        is applied twice is a real financial defect, not a cosmetic one.
+      operationId: createMovement
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMovementRequest'
+      responses:
+        '201':
+          description: Movement registered.
+          headers:
+            Location:
+              description: Absolute URI of the created movement.
+              required: true
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: The referenced account does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            Business rule violation. The two cases that matter:
+
+            | Problem type | Meaning |
+            |---|---|
+            | `urn:bank:error:insufficient-balance` | `Saldo no disponible` |
+            | `urn:bank:error:account-inactive` | The account is closed |
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                insufficientBalance:
+                  summary: Withdrawal without available balance
+                  value:
+                    type: 'urn:bank:error:insufficient-balance'
+                    title: Insufficient balance
+                    status: 422
+                    detail: Saldo no disponible
+                    instance: /api/v1/movements
+                    traceId: 4f2c1a9e8b7d6c5a
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/movements/{movementId}:
+    parameters:
+      - $ref: '#/components/parameters/MovementId'
+
+    get:
+      tags: [Movements]
+      summary: Retrieve a movement
+      operationId: getMovement
+      responses:
+        '200':
+          description: The movement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags: [Movements]
+      summary: Correct a movement
+      description: |
+        Corrects a previously registered movement and recomputes the balances
+        of every movement that follows it on the same account.
+
+        A word of warning, because the exercise asks for full CRUD on
+        movements and this endpoint delivers it: a real ledger is
+        **append-only**. Corrections are posted as compensating entries so the
+        original fact is never erased and the history always adds up. Editing a
+        past movement in place rewrites history and breaks reconciliation
+        against anything already reported. ADR-0007 records this.
+      operationId: replaceMovement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceMovementRequest'
+      responses:
+        '200':
+          description: Movement corrected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: |
+            The correction would drive the account, or any later point in its
+            history, below zero.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags: [Movements]
+      summary: Reverse a movement
+      description: |
+        Reverses the movement's effect on the account balance and recomputes
+        the balances that follow it. Same caveat as PUT — see ADR-0007.
+      operationId: deleteMovement
+      responses:
+        '204':
+          description: Movement reversed. No body.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Reversing this movement would leave the account below zero.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================================================
+  # Reports
+  # ===========================================================================
+
+  /reports/{clientId}:
+    get:
+      tags: [Reports]
+      summary: Account statement for a customer over a date range
+      description: |
+        Returns every account belonging to the customer, its balance, and the
+        movements recorded in the requested window.
+
+        **Two representations, one resource.** The format is chosen with the
+        `Accept` header, not with a `?format=` parameter — the resource is the
+        same statement either way; JSON and Excel are just two renderings of
+        it. That is exactly what content negotiation is for.
+
+        | `Accept` | Response |
+        |---|---|
+        | `application/json` (default) | JSON document |
+        | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `.xlsx` download |
+
+        The path is `/reports/{clientId}` rather than `/api/v1/reports/...`
+        because the exercise statement pins it. It is the one endpoint in this
+        contract that is not version-prefixed, and that inconsistency is
+        deliberate compliance, not an oversight.
+      operationId: getCustomerStatement
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          description: Public identifier of the customer.
+          schema:
+            type: string
+            format: uuid
+        - name: startDate
+          in: query
+          required: true
+          description: Inclusive first day of the reporting window.
+          schema:
+            type: string
+            format: date
+          example: '2022-02-01'
+        - name: endDate
+          in: query
+          required: true
+          description: Inclusive last day of the reporting window.
+          schema:
+            type: string
+            format: date
+          example: '2022-02-28'
+      responses:
+        '200':
+          description: The statement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountStatementReport'
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: |
+            Malformed dates, or `startDate` after `endDate`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: The customer is unknown to this service.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            The requested window exceeds the maximum supported range.
+            Unbounded report ranges are how a single request takes a database
+            down.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+
+  parameters:
+
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    MovementId:
+      name: movementId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    PageNumber:
+      name: page
+      in: query
+      required: false
+      description: Zero-based page index.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+
+    PageSize:
+      name: size
+      in: query
+      required: false
+      description: Page size, capped at 100.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Client-generated UUID. Replaying a request with the same key returns
+        the original result instead of applying the operation twice.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+
+    BadRequest:
+      description: The request is malformed or fails schema validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    UnprocessableContent:
+      description: Syntactically valid, but rejected by a business rule.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    InternalServerError:
+      description: Unexpected server failure.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+
+    MonetaryAmount:
+      type: string
+      description: |
+        A decimal amount with at most two fraction digits, transported as a
+        string for exactness. Parsed into a `BigDecimal`-backed `Money` value
+        object at the boundary — never handled as a `double`.
+      pattern: '^-?[0-9]{1,13}(\.[0-9]{1,2})?$'
+      example: '2000.00'
+
+    AccountType:
+      type: string
+      description: |
+        `SAVINGS` is the exercise's "Ahorro", `CHECKING` is "Corriente".
+        The wire format is English because the codebase is English; the display
+        label is a presentation concern and does not belong in the contract.
+      enum: [SAVINGS, CHECKING]
+
+    MovementType:
+      type: string
+      description: |
+        `CREDIT` increases the balance, `DEBIT` decreases it. The exercise's
+        "Crédito" and "Débito".
+      enum: [CREDIT, DEBIT]
+
+    CreateAccountRequest:
+      type: object
+      required: [accountNumber, accountType, initialBalance, customerId]
+      properties:
+        accountNumber:
+          type: string
+          description: Business account number. Unique across the service.
+          minLength: 4
+          maxLength: 20
+          pattern: '^[0-9]+$'
+          example: '478758'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        initialBalance:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: Opening balance. May be zero, never negative.
+        customerId:
+          type: string
+          format: uuid
+          description: |
+            Owner of the account. Validated against this service's local
+            customer projection, not against `customer-service`.
+        status:
+          type: boolean
+          description: Whether the account is open.
+          default: true
+
+    ReplaceAccountRequest:
+      type: object
+      required: [accountNumber, accountType, status]
+      properties:
+        accountNumber:
+          type: string
+          minLength: 4
+          maxLength: 20
+          pattern: '^[0-9]+$'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        status:
+          type: boolean
+
+    UpdateAccountRequest:
+      type: object
+      description: Every field optional. Absent means "leave unchanged".
+      minProperties: 1
+      properties:
+        accountNumber:
+          type: string
+          minLength: 4
+          maxLength: 20
+          pattern: '^[0-9]+$'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        status:
+          type: boolean
+
+    AccountResponse:
+      type: object
+      required: [accountId, accountNumber, accountType, initialBalance, balance, status, customerId, createdAt, updatedAt]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+          readOnly: true
+        accountNumber:
+          type: string
+          example: '478758'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        initialBalance:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: The opening balance. Immutable once the account exists.
+        balance:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: |
+            Current available balance. Derived from the movements — read-only
+            by construction, not merely by convention.
+          readOnly: true
+        status:
+          type: boolean
+        customerId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    AccountPage:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+
+    CreateMovementRequest:
+      type: object
+      required: [accountId, movementType, value]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        movementType:
+          $ref: '#/components/schemas/MovementType'
+        value:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: |
+            Strictly greater than zero. Always positive: the direction is
+            carried by `movementType`.
+          example: '575.00'
+        occurredAt:
+          type: string
+          format: date-time
+          description: |
+            When the movement happened. Defaults to the server clock if
+            omitted. Accepting a client-supplied timestamp lets a batch import
+            replay history in the right order; the server still refuses future
+            dates.
+
+    ReplaceMovementRequest:
+      type: object
+      required: [movementType, value]
+      properties:
+        movementType:
+          $ref: '#/components/schemas/MovementType'
+        value:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: Strictly greater than zero.
+        occurredAt:
+          type: string
+          format: date-time
+
+    MovementResponse:
+      type: object
+      required: [movementId, accountId, accountNumber, movementType, value, balanceAfter, occurredAt]
+      properties:
+        movementId:
+          type: string
+          format: uuid
+          readOnly: true
+        accountId:
+          type: string
+          format: uuid
+        accountNumber:
+          type: string
+          description: Denormalised for readability. The report needs it on every row.
+        movementType:
+          $ref: '#/components/schemas/MovementType'
+        value:
+          $ref: '#/components/schemas/MonetaryAmount'
+        balanceAfter:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: |
+            The account balance immediately after this movement was applied —
+            the exercise's "Saldo". Stored rather than recomputed at read time
+            so a statement always reproduces the same numbers it showed before.
+          readOnly: true
+        occurredAt:
+          type: string
+          format: date-time
+
+    MovementPage:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/MovementResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+
+    AccountStatementReport:
+      type: object
+      description: The exercise's "Estado de cuenta" (F4).
+      required: [clientId, clientName, startDate, endDate, generatedAt, accounts]
+      properties:
+        clientId:
+          type: string
+          format: uuid
+        clientName:
+          type: string
+          description: Read from this service's local customer projection.
+          example: Marianela Montalvo
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        generatedAt:
+          type: string
+          format: date-time
+          description: |
+            When this statement was produced. On an eventually consistent read
+            model, a report without a timestamp cannot be reconciled later.
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountStatementEntry'
+
+    AccountStatementEntry:
+      type: object
+      required: [accountId, accountNumber, accountType, status, initialBalance, currentBalance, totalCredits, totalDebits, movements]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        accountNumber:
+          type: string
+          example: '225487'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        status:
+          type: boolean
+        initialBalance:
+          $ref: '#/components/schemas/MonetaryAmount'
+        currentBalance:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: Balance at the end of the reporting window.
+        totalCredits:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: Sum of credits inside the window.
+        totalDebits:
+          allOf:
+            - $ref: '#/components/schemas/MonetaryAmount'
+          description: Sum of debits inside the window.
+        movements:
+          type: array
+          items:
+            $ref: '#/components/schemas/MovementResponse'
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details. Identical shape to customer-service.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: 'urn:bank:error:insufficient-balance'
+        title:
+          type: string
+          example: Insufficient balance
+        status:
+          type: integer
+          format: int32
+          example: 422
+        detail:
+          type: string
+          example: Saldo no disponible
+        instance:
+          type: string
+          format: uri
+        traceId:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string

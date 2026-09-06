@@ -11,6 +11,7 @@ java = "21"
 springBoot = "4.1.1"
 lombok = "1.18.48"
 archunit = "1.5.0"
+openapiGenerator = "7.14.0"
 
 [libraries]
 # Bill of Materials. Imported as a Gradle platform, it aligns the versions of
@@ -24,6 +25,4 @@ archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref
 # Plugin artifacts consumed by buildSrc convention plugins. Declaring them as
 # libraries (not [plugins]) is what lets buildSrc put them on its classpath.
 springBoot-gradlePlugin = { module = "org.springframework.boot:spring-boot-gradle-plugin", version.ref = "springBoot" }
-
-[bundles]
-test = ["archunit-junit5"]
+openapiGenerator-gradlePlugin = { module = "org.openapitools:openapi-generator-gradle-plugin", version.ref = "openapiGenerator" }
