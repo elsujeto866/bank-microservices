@@ -1,0 +1,147 @@
+# =============================================================================
+# Local infrastructure.
+#
+# Brings up ONLY the backing services: two isolated PostgreSQL databases and a
+# single-node Kafka broker. The applications themselves are added in a later
+# stage — a developer should be able to run the databases and the broker while
+# running the services from the IDE with a debugger attached.
+#
+#   docker compose up -d
+#   docker compose ps
+#   docker compose down -v      # -v also drops the volumes
+# =============================================================================
+
+name: bank-microservices
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # One database per service (ADR-0004). Two separate containers, two separate
+  # volumes, two separate credentials. Nothing stops us from running one
+  # container with two schemas — except that it would let a future developer
+  # write a JOIN across the service boundary, which is exactly the failure mode
+  # we are designing against.
+  # ---------------------------------------------------------------------------
+  customer-db:
+    image: postgres:18.6-alpine
+    container_name: bank-customer-db
+    environment:
+      POSTGRES_DB: customer_db
+      POSTGRES_USER: customer_user
+      POSTGRES_PASSWORD: customer_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - customer-db-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone reports the server is up before it accepts our
+      # database; naming the user and database avoids a race on startup.
+      test: ["CMD-SHELL", "pg_isready -U customer_user -d customer_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  account-db:
+    image: postgres:18.6-alpine
+    container_name: bank-account-db
+    environment:
+      POSTGRES_DB: account_db
+      POSTGRES_USER: account_user
+      POSTGRES_PASSWORD: account_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - account-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U account_user -d account_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Kafka in KRaft mode — no ZooKeeper. Since Kafka 3.3 the broker manages its
+  # own metadata quorum, so a local single-node cluster is one container instead
+  # of two.
+  #
+  # Two listeners on purpose:
+  #   PLAINTEXT      :9092  reached from inside the compose network (kafka:9092)
+  #   PLAINTEXT_HOST :29092 reached from the host (localhost:29092)
+  #
+  # This is the single most common local-Kafka mistake: a broker advertises an
+  # address the client cannot resolve. The client connects, is handed
+  # "kafka:9092", and then hangs trying to resolve it from the host. Two
+  # listeners, two advertised addresses, no hang.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:4.1.2
+    container_name: bank-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single node: nothing to replicate to. These defaults are 3 in
+      # production and MUST be raised there.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly with the right partition count and
+      # retention. Auto-creation hands you a 1-partition topic the first time
+      # somebody typos a name, and you find out in production.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: bank-local-cluster-0001
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Creates the topics declaratively, then exits. Runs once, after the broker is
+  # healthy. Topic configuration is infrastructure and belongs in version
+  # control, not in somebody's shell history.
+  # ---------------------------------------------------------------------------
+  kafka-topics:
+    image: apache/kafka:4.1.2
+    container_name: bank-kafka-topics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      set -e
+      echo 'Creating topics...'
+      # 3 partitions: allows up to 3 consumer instances in the group. Ordering
+      # is guaranteed per partition, and the partition key is customerId, so
+      # every event for one customer stays ordered.
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+        --create --if-not-exists --topic customer.events.v1 \
+        --partitions 3 --replication-factor 1
+      # Dead-letter topic: a poison message is parked here instead of blocking
+      # its partition forever.
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+        --create --if-not-exists --topic customer.events.v1.dlt \
+        --partitions 3 --replication-factor 1
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+      "
+    restart: "no"
+
+volumes:
+  customer-db-data:
+  account-db-data:
+  kafka-data:

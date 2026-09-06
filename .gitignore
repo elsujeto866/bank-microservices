@@ -1,0 +1,40 @@
+# Build output
+build/
+!buildSrc/
+out/
+bin/
+
+# Gradle
+.gradle/
+gradle-app.setting
+.gradletasknamecache
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+nbproject/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local environment overrides — never commit machine-specific state
+.env
+.env.local
+local.properties
+
+# Generated OpenAPI sources (regenerated from contracts/ on every build)
+**/generated/
+
+# Local tooling caches
+.atl/
