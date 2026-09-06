@@ -155,7 +155,7 @@ Built in reviewable stages, one pull request each.
 | 1 | Contract-first: OpenAPI + AsyncAPI, code generation | ✅ |
 | 1.5 | Migrate the build from the Kotlin DSL to the Groovy DSL | ✅ |
 | 2 | `customer-service` — domain model, test-first | ✅ |
-| 3 | `customer-service` — use cases and ports, test-first | ⬜ |
+| 3 | `customer-service` — use cases and ports, test-first | ✅ |
 | 4 | `customer-service` — adapters: REST, JPA, error handling | ⬜ |
 | 5 | `account-service` — domain and use cases (TDD), F2/F3 balance rules | ⬜ |
 | 6 | `account-service` — adapters | ⬜ |

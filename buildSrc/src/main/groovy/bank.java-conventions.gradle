@@ -30,6 +30,13 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += [
         '-Xlint:all',
         '-Xlint:-processing', // annotation processors (Lombok) are expected
+        // Every exception type extends RuntimeException, which is Serializable,
+        // so javac asks for a serialVersionUID on each one. Nothing in this
+        // system is ever Java-serialised — messages are JSON, persistence is
+        // JPA — so the constant would be pure ceremony repeated on every
+        // exception class. Silenced deliberately rather than satisfied blindly:
+        // a warning nobody can act on is a warning everybody learns to ignore.
+        '-Xlint:-serial',
         '-parameters',        // keeps parameter names at runtime; Jackson and Spring need them
     ]
 }
