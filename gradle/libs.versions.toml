@@ -1,0 +1,29 @@
+# =============================================================================
+# Version Catalog — the single source of truth for every external dependency.
+#
+# Why this file exists: without it, versions get hardcoded across six build
+# scripts and drift apart. One place to look, one place to bump, and the IDE
+# gives you type-safe accessors (libs.spring.boot.bom) instead of magic strings.
+# =============================================================================
+
+[versions]
+java = "21"
+springBoot = "4.1.1"
+lombok = "1.18.48"
+archunit = "1.5.0"
+
+[libraries]
+# Bill of Materials. Imported as a Gradle platform, it aligns the versions of
+# every Spring artifact so we never declare a Spring version by hand again.
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+
+archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+
+# Plugin artifacts consumed by buildSrc convention plugins. Declaring them as
+# libraries (not [plugins]) is what lets buildSrc put them on its classpath.
+springBoot-gradlePlugin = { module = "org.springframework.boot:spring-boot-gradle-plugin", version.ref = "springBoot" }
+
+[bundles]
+test = ["archunit-junit5"]

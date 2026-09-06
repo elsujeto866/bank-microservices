@@ -1,0 +1,16 @@
+// buildSrc is a separate, self-contained Gradle build. It does not inherit the
+// main build's settings, so we re-import the version catalog here. That keeps
+// gradle/libs.versions.toml as the ONE place where versions live.
+dependencyResolutionManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+    versionCatalogs {
+        create("libs") {
+            from(files("../gradle/libs.versions.toml"))
+        }
+    }
+}
+
+rootProject.name = "buildSrc"
