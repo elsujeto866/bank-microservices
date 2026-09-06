@@ -1,0 +1,293 @@
+asyncapi: 3.0.0
+
+info:
+  title: Customer Events
+  version: 1.0.0
+  description: |
+    Domain events published by `customer-service` and consumed by
+    `account-service` to maintain its local customer projection.
+
+    ## A Kafka topic is a public API
+
+    It has consumers you do not control, it cannot be changed without breaking
+    them, and it outlives the code that produced it — messages sit in the log
+    long after the publisher was redeployed. Everything that makes a REST
+    contract worth writing down applies here, which is why this file exists
+    alongside the OpenAPI documents rather than living in someone's head.
+
+    ## Compatibility rules
+
+    | Change | Allowed on `v1`? |
+    |---|---|
+    | Add an optional field | Yes |
+    | Add a new event type | Yes — consumers must ignore unknown types |
+    | Make an optional field required | No |
+    | Remove or rename a field | No |
+    | Change a field's type | No |
+    | Change the meaning of a field | No — worse than removing it, because nothing fails |
+
+    A breaking change means a new topic, `customer.events.v2`, running in
+    parallel until every consumer has migrated. The major version lives in the
+    topic name so the two can coexist; a version that only exists inside the
+    payload gives you no way to run both at once.
+
+    ## Delivery semantics
+
+    - **At-least-once.** Kafka guarantees delivery, not uniqueness. Duplicates
+      *will* arrive — after a consumer rebalance, after a redelivery, after a
+      producer retry. Consumers deduplicate on `eventId`. This is a correctness
+      requirement, not an optimisation.
+    - **Ordered per customer.** The partition key is `customerId`, and Kafka
+      orders messages within a partition. All events for one customer land on
+      one partition and are therefore ordered relative to each other. There is
+      no global order across customers, and none is needed.
+    - **Published through a transactional outbox.** The producer writes the
+      domain change and the event in one database transaction; a relay ships
+      the row to Kafka afterwards. Writing to the database and then publishing
+      to Kafka as two independent steps is a dual write, and a crash in between
+      loses the event with no trace. See ADR-0005.
+
+defaultContentType: application/json
+
+servers:
+  local:
+    host: localhost:29092
+    protocol: kafka
+    description: Local broker, host listener.
+  docker:
+    host: kafka:9092
+    protocol: kafka
+    description: Local broker, from inside the compose network.
+
+channels:
+
+  customerEvents:
+    address: customer.events.v1
+    title: Customer domain events
+    description: |
+      3 partitions, keyed by `customerId`.
+    messages:
+      customerCreated:
+        $ref: '#/components/messages/CustomerCreated'
+      customerUpdated:
+        $ref: '#/components/messages/CustomerUpdated'
+      customerDeactivated:
+        $ref: '#/components/messages/CustomerDeactivated'
+
+  customerEventsDlt:
+    address: customer.events.v1.dlt
+    title: Dead letter topic
+    description: |
+      Where a message goes after the retry budget is exhausted.
+
+      Without this, a single unprocessable message blocks its partition
+      forever: the consumer fails, does not commit the offset, retries the same
+      message, and every event behind it waits in line. Parking the poison
+      message keeps the partition moving, and the failure becomes an alert on a
+      queue depth instead of a silent stall.
+    messages:
+      failedEvent:
+        $ref: '#/components/messages/CustomerCreated'
+
+operations:
+
+  publishCustomerEvents:
+    action: send
+    channel:
+      $ref: '#/channels/customerEvents'
+    title: Publish customer events
+    description: Performed by `customer-service` via the outbox relay.
+    messages:
+      - $ref: '#/channels/customerEvents/messages/customerCreated'
+      - $ref: '#/channels/customerEvents/messages/customerUpdated'
+      - $ref: '#/channels/customerEvents/messages/customerDeactivated'
+
+  consumeCustomerEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/customerEvents'
+    title: Consume customer events
+    description: |
+      Performed by `account-service` (consumer group
+      `account-service.customer-projection`) to maintain its local customer
+      read model.
+    messages:
+      - $ref: '#/channels/customerEvents/messages/customerCreated'
+      - $ref: '#/channels/customerEvents/messages/customerUpdated'
+      - $ref: '#/channels/customerEvents/messages/customerDeactivated'
+
+components:
+
+  messages:
+
+    CustomerCreated:
+      name: CustomerCreated
+      title: A customer was created
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            properties:
+              eventType:
+                type: string
+                enum: [CustomerCreated]
+              data:
+                $ref: '#/components/schemas/CustomerSnapshot'
+            required: [data]
+      examples:
+        - name: created
+          payload:
+            eventId: 018f3b2c-1d4e-7a90-bc12-3d4e5f6a7b8c
+            eventType: CustomerCreated
+            occurredAt: '2026-09-06T14:30:00Z'
+            customerId: 3f1a8d2e-7c44-4b0a-9c6e-1f2b3c4d5e6f
+            data:
+              customerId: 3f1a8d2e-7c44-4b0a-9c6e-1f2b3c4d5e6f
+              name: Jose Lema
+              identification: '1712345678'
+              status: true
+
+    CustomerUpdated:
+      name: CustomerUpdated
+      title: A customer's data changed
+      description: |
+        Carries the **full current state**, not a delta.
+
+        A delta forces every consumer to already hold the previous state and to
+        have applied every earlier event in order. A snapshot is
+        self-contained: a consumer that missed an event, or is rebuilding from
+        offset zero, converges on the right answer anyway. Slightly larger
+        messages, dramatically simpler consumers.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            properties:
+              eventType:
+                type: string
+                enum: [CustomerUpdated]
+              data:
+                $ref: '#/components/schemas/CustomerSnapshot'
+            required: [data]
+
+    CustomerDeactivated:
+      name: CustomerDeactivated
+      title: A customer was deactivated
+      description: |
+        Emitted on `DELETE /api/v1/customers/{customerId}`. The customer is
+        deactivated rather than erased (ADR-0007), so this is a state change,
+        not a tombstone.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            properties:
+              eventType:
+                type: string
+                enum: [CustomerDeactivated]
+              data:
+                type: object
+                required: [customerId, deactivatedAt]
+                properties:
+                  customerId:
+                    type: string
+                    format: uuid
+                  deactivatedAt:
+                    type: string
+                    format: date-time
+            required: [data]
+
+  schemas:
+
+    EventHeaders:
+      type: object
+      description: |
+        Kafka record headers. Metadata belongs here rather than in the payload
+        so a consumer, a monitoring tool or a DLQ inspector can route and trace
+        a message without deserialising the body.
+      properties:
+        correlationId:
+          type: string
+          format: uuid
+          description: |
+            Propagated from the HTTP request that caused the change, and on
+            into whatever the consumer does next. Without it, a failure that
+            crosses two services and a broker is three unrelated log files.
+        eventType:
+          type: string
+          description: |
+            Duplicated from the payload on purpose, so a consumer can decide
+            whether it cares before paying to deserialise.
+        schemaVersion:
+          type: string
+          description: Minor version of the payload schema.
+          example: '1.0'
+      required: [correlationId, eventType, schemaVersion]
+
+    EventEnvelope:
+      type: object
+      description: Fields common to every event on this topic.
+      required: [eventId, eventType, occurredAt, customerId]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: |
+            Unique per event. **This is the deduplication key.** A consumer
+            records the ids it has processed and silently drops repeats, which
+            is what makes at-least-once delivery safe.
+        eventType:
+          type: string
+          description: Discriminator. Consumers must ignore types they do not recognise.
+        occurredAt:
+          type: string
+          format: date-time
+          description: |
+            When the change happened in the producer's domain — not when the
+            message was published, and not when it was consumed. Those three
+            timestamps differ, and using the wrong one silently corrupts any
+            time-based logic downstream.
+        customerId:
+          type: string
+          format: uuid
+          description: Also the Kafka partition key, which is what guarantees per-customer ordering.
+
+    CustomerSnapshot:
+      type: object
+      description: |
+        The customer's full current state.
+
+        Note what is absent: `password`. A credential must never leave the
+        service that owns it, least of all onto a topic that is retained for
+        days and readable by every consumer in the cluster.
+      required: [customerId, name, identification, status]
+      properties:
+        customerId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Jose Lema
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER, UNSPECIFIED]
+        identification:
+          type: string
+          example: '1712345678'
+        address:
+          type: string
+          example: Otavalo sn y principal
+        phone:
+          type: string
+          example: '098254785'
+        status:
+          type: boolean

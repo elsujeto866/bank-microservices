@@ -1,0 +1,507 @@
+openapi: 3.0.3
+
+info:
+  title: Customer Service API
+  version: 1.0.0
+  description: |
+    Manages customers and their personal data.
+
+    ## Conventions used across this API
+
+    - **Identifiers are UUIDs.** Database sequence numbers are never exposed.
+      A sequential id lets any caller enumerate resources and leaks how many
+      records exist; it also welds the public contract to the storage engine.
+    - **Errors follow RFC 9457 (Problem Details).** `type` is for machines,
+      `detail` is for humans. Never parse `detail`.
+    - **Collections are always paginated.** An endpoint that returns "all" rows
+      is a production incident waiting for the table to grow.
+    - **Timestamps are ISO-8601 with an offset** (`2026-09-06T14:30:00Z`).
+  contact:
+    name: Bank Platform Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8081
+    description: Local development
+
+tags:
+  - name: Customers
+    description: Customer lifecycle
+
+paths:
+
+  /api/v1/customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      operationId: listCustomers
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: identification
+          in: query
+          description: Exact match on the national identification number.
+          required: false
+          schema:
+            type: string
+            maxLength: 20
+        - name: status
+          in: query
+          description: Filter by active flag. Omitted returns both.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: A page of customers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags: [Customers]
+      summary: Create a customer
+      operationId: createCustomer
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerRequest'
+      responses:
+        '201':
+          description: Customer created.
+          headers:
+            Location:
+              description: Absolute URI of the created customer.
+              required: true
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: |
+            A customer with that identification already exists. Identification
+            is a natural key and is enforced unique.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/customers/{customerId}:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+
+    get:
+      tags: [Customers]
+      summary: Retrieve a customer
+      operationId: getCustomer
+      responses:
+        '200':
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags: [Customers]
+      summary: Replace a customer
+      description: |
+        Full replacement. Every writable field must be supplied; omitted fields
+        are not "left alone", they are absent from the new representation.
+        For partial changes such as flipping `status`, use PATCH.
+      operationId: replaceCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceCustomerRequest'
+      responses:
+        '200':
+          description: Customer replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The new identification collides with another customer.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      tags: [Customers]
+      summary: Partially update a customer
+      description: |
+        Only the supplied fields are modified. This is the correct verb for a
+        status change or an address correction — PUT would force the caller to
+        resend the whole resource and risk clobbering a concurrent edit.
+      operationId: updateCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+      responses:
+        '200':
+          description: Customer updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags: [Customers]
+      summary: Delete a customer
+      description: |
+        Deactivates the customer and emits a `CustomerDeactivated` event.
+
+        The record is **not** physically removed. Accounts and movements refer
+        to this customer and a financial history must remain auditable; a hard
+        delete would either orphan that history or cascade it away. See
+        ADR-0007.
+      operationId: deleteCustomer
+      responses:
+        '204':
+          description: Customer deactivated. No body.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The customer cannot be deactivated because it still has active
+            accounts holding a non-zero balance.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+
+  parameters:
+
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      description: Public identifier of the customer.
+      schema:
+        type: string
+        format: uuid
+      example: 3f1a8d2e-7c44-4b0a-9c6e-1f2b3c4d5e6f
+
+    PageNumber:
+      name: page
+      in: query
+      required: false
+      description: Zero-based page index.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+
+    PageSize:
+      name: size
+      in: query
+      required: false
+      description: |
+        Page size. Capped at 100 deliberately — an unbounded page size is a
+        denial-of-service vector against your own database.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Client-generated UUID. Replaying a request with the same key returns
+        the original result instead of creating a second customer.
+
+        This matters because POST is not idempotent: a client whose request
+        times out cannot know whether the resource was created. Without this
+        header its only options are to retry (risking a duplicate) or to give
+        up (risking a lost write).
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+
+    BadRequest:
+      description: The request is malformed or fails schema validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    NotFound:
+      description: No customer exists with that identifier.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    UnprocessableContent:
+      description: |
+        The request is syntactically valid but violates a business rule.
+
+        The distinction from 400 is deliberate: 400 means "I could not read
+        this", 422 means "I read it fine, and the answer is no".
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    InternalServerError:
+      description: Unexpected server failure.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+
+    Gender:
+      type: string
+      description: |
+        A closed set, not free text. An enum in the contract means an invalid
+        value is rejected by the framework before any business code runs.
+      enum: [MALE, FEMALE, OTHER, UNSPECIFIED]
+
+    PersonFields:
+      type: object
+      description: Attributes every person carries, whether or not they are a customer.
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          example: Jose Lema
+        gender:
+          $ref: '#/components/schemas/Gender'
+        identification:
+          type: string
+          description: National identification number. Unique across customers.
+          minLength: 5
+          maxLength: 20
+          pattern: '^[A-Za-z0-9-]+$'
+          example: '1712345678'
+        address:
+          type: string
+          minLength: 3
+          maxLength: 200
+          example: Otavalo sn y principal
+        phone:
+          type: string
+          minLength: 7
+          maxLength: 20
+          pattern: '^[0-9+()\- ]+$'
+          example: '098254785'
+
+    CreateCustomerRequest:
+      allOf:
+        - $ref: '#/components/schemas/PersonFields'
+        - type: object
+          properties:
+            password:
+              type: string
+              description: |
+                Write-only. Stored as a salted hash and never returned by any
+                endpoint. A field that is only ever an input belongs in the
+                request schema alone — putting it on a shared model is how
+                credentials end up in a log line.
+              format: password
+              minLength: 4
+              maxLength: 72
+              writeOnly: true
+            status:
+              type: boolean
+              description: Whether the customer is active.
+              default: true
+          required: [name, gender, identification, address, phone, password]
+
+    ReplaceCustomerRequest:
+      allOf:
+        - $ref: '#/components/schemas/PersonFields'
+        - type: object
+          properties:
+            password:
+              type: string
+              format: password
+              minLength: 4
+              maxLength: 72
+              writeOnly: true
+            status:
+              type: boolean
+          required: [name, gender, identification, address, phone, status]
+
+    UpdateCustomerRequest:
+      type: object
+      description: Every field optional. Absent means "leave unchanged".
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        gender:
+          $ref: '#/components/schemas/Gender'
+        address:
+          type: string
+          minLength: 3
+          maxLength: 200
+        phone:
+          type: string
+          minLength: 7
+          maxLength: 20
+          pattern: '^[0-9+()\- ]+$'
+        password:
+          type: string
+          format: password
+          minLength: 4
+          maxLength: 72
+          writeOnly: true
+        status:
+          type: boolean
+
+    CustomerResponse:
+      allOf:
+        - $ref: '#/components/schemas/PersonFields'
+        - type: object
+          properties:
+            customerId:
+              type: string
+              format: uuid
+              readOnly: true
+            status:
+              type: boolean
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+          required: [customerId, name, gender, identification, address, phone, status, createdAt, updatedAt]
+
+    CustomerPage:
+      type: object
+      description: |
+        A hand-rolled envelope rather than Spring's `Page`. Serialising a
+        framework class straight to JSON publishes its internals as your
+        contract — and Spring has changed that shape between versions before.
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+      required: [content, page, size, totalElements, totalPages]
+
+    Problem:
+      type: object
+      description: |
+        RFC 9457 Problem Details. One error shape for the whole platform, so a
+        client writes its error handling once.
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Stable URI identifying the problem class. This is the machine-readable key.
+          example: 'urn:bank:error:customer-not-found'
+        title:
+          type: string
+          description: Short, human-readable summary. Constant per problem type.
+          example: Customer not found
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code, repeated for clients that only see the body.
+          example: 404
+        detail:
+          type: string
+          description: |
+            Human-readable explanation of THIS occurrence. Never parse it — it
+            is free text and may be translated or reworded at any time.
+          example: 'No customer exists with id 3f1a8d2e-7c44-4b0a-9c6e-1f2b3c4d5e6f'
+        instance:
+          type: string
+          format: uri
+          description: URI of the specific request that failed.
+        traceId:
+          type: string
+          description: |
+            Correlation id shared with the logs. This single field is what turns
+            "it failed on my side" into a two-minute log query.
+        errors:
+          type: array
+          description: Field-level violations, present on validation failures.
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+            required: [field, message]
+      required: [type, title, status]

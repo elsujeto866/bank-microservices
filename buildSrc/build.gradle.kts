@@ -7,6 +7,7 @@ dependencies {
     // Plugins we want to apply from inside our own convention plugins must be
     // on buildSrc's compile classpath first.
     implementation(libs.springBoot.gradlePlugin)
+    implementation(libs.openapiGenerator.gradlePlugin)
 
     // Gradle generates type-safe catalog accessors for build scripts, but does
     // NOT expose them to precompiled script plugins. Putting the generated
