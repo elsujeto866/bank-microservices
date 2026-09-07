@@ -9,21 +9,23 @@
 // to the edge.
 // =============================================================================
 
+import org.gradle.api.artifacts.VersionCatalogsExtension
+
 plugins {
-    id("bank.java-conventions")
+    id 'bank.java-conventions'
 }
 
-val libs = the<org.gradle.accessors.dm.LibrariesForLibs>()
+def libs = extensions.getByType(VersionCatalogsExtension).named('libs')
 
 dependencies {
-    implementation(platform(libs.spring.boot.bom))
+    implementation platform(libs.findLibrary('spring-boot-bom').get())
 
-    testImplementation(platform(libs.spring.boot.bom))
-    testImplementation("org.junit.jupiter:junit-jupiter")
-    testImplementation("org.assertj:assertj-core")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation platform(libs.findLibrary('spring-boot-bom').get())
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     // ArchUnit runs the architecture rules the Gradle module graph cannot see:
     // package naming, annotation placement, "no cycles", and so on.
-    testImplementation(libs.archunit.junit5)
+    testImplementation libs.findLibrary('archunit-junit5').get()
 }

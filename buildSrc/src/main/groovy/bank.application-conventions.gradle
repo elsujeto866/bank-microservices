@@ -1,0 +1,73 @@
+// =============================================================================
+// Application module conventions — the use-case ring.
+//
+// Holds the use cases and the PORTS they talk through (interfaces such as
+// CustomerRepository or CustomerEventPublisher). It knows the domain. It does
+// not know who implements the ports.
+//
+// Reactor IS allowed here: Mono/Flux are part of the port signatures, so the
+// use cases have to speak that language. Spring, JPA and Kafka are not.
+// =============================================================================
+
+import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+plugins {
+    id 'bank.java-conventions'
+}
+
+def libs = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+dependencies {
+    implementation platform(libs.findLibrary('spring-boot-bom').get())
+    api 'io.projectreactor:reactor-core'
+
+    testImplementation platform(libs.findLibrary('spring-boot-bom').get())
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation 'org.mockito:mockito-junit-jupiter'
+    testImplementation 'io.projectreactor:reactor-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Same fitness function as the domain, minus Reactor. The use cases orchestrate
+// business rules; they must never reach for a framework to do it.
+def forbiddenGroupPrefixes = [
+    'org.springframework',
+    'jakarta.persistence',
+    'jakarta.servlet',
+    'org.hibernate',
+    'org.apache.kafka',
+]
+
+def runtimeArtifacts = configurations.named('runtimeClasspath')
+        .flatMap { it.incoming.artifacts.resolvedArtifacts }
+
+def verifyApplicationPurity = tasks.register('verifyApplicationPurity') {
+    group = 'verification'
+    description = 'Fails if the application module depends on a framework or an infrastructure library.'
+
+    def artifacts = runtimeArtifacts
+    def forbidden = forbiddenGroupPrefixes
+    def modulePath = project.path
+
+    doLast {
+        def violations = artifacts.get()
+                .collect { it.id.componentIdentifier }
+                .findAll { it instanceof ModuleComponentIdentifier }
+                .findAll { component -> forbidden.any { component.group.startsWith(it) } }
+                .collect { "${it.group}:${it.module}:${it.version}" as String }
+                .unique()
+                .sort()
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("""\
+Architectural violation in ${modulePath}.
+The application layer must depend on ports, not on frameworks. These leaked in:
+${violations.collect { "  - $it" }.join('\n')}
+""")
+        }
+    }
+}
+
+tasks.named('check') { dependsOn verifyApplicationPurity }

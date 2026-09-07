@@ -6,12 +6,14 @@
 // everywhere.
 // =============================================================================
 
+import org.gradle.api.artifacts.VersionCatalogsExtension
+
 plugins {
     // `java-library`, not plain `java`. It adds the `api` configuration, which
     // is how a module declares "this dependency is part of my public signature,
     // so my consumers must see it too" — as opposed to `implementation`, which
     // is an internal detail and stays off the consumer's compile classpath.
-    `java-library`
+    id 'java-library'
 }
 
 java {
@@ -19,33 +21,41 @@ java {
         // A toolchain, not `sourceCompatibility`. Gradle locates (or downloads)
         // a real JDK 21 instead of trusting whatever JAVA_HOME happens to be.
         // The build produces identical bytecode on every machine and in CI.
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
-tasks.withType<JavaCompile>().configureEach {
-    options.encoding = "UTF-8"
-    options.compilerArgs.addAll(
-        listOf(
-            "-Xlint:all",
-            "-Xlint:-processing", // annotation processors (Lombok) are expected
-            "-parameters",        // keeps parameter names at runtime; Jackson and Spring need them
-        )
-    )
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += [
+        '-Xlint:all',
+        '-Xlint:-processing', // annotation processors (Lombok) are expected
+        '-parameters',        // keeps parameter names at runtime; Jackson and Spring need them
+    ]
 }
 
-tasks.withType<Test>().configureEach {
+tasks.withType(Test).configureEach {
     useJUnitPlatform()
     testLogging {
-        events("passed", "skipped", "failed")
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'full'
         showStandardStreams = false
     }
 }
 
-tasks.withType<Javadoc>().configureEach {
-    options.encoding = "UTF-8"
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
 }
+
+// -----------------------------------------------------------------------------
+// Reading the version catalog from a precompiled script plugin.
+//
+// Gradle generates type-safe `libs.` accessors for ordinary build scripts, but
+// not for these convention plugins. The supported way in is to ask for the
+// catalog through its extension — slightly more verbose, and it keeps
+// gradle/libs.versions.toml as the single place versions are declared.
+// -----------------------------------------------------------------------------
+def libs = extensions.getByType(VersionCatalogsExtension).named('libs')
 
 // -----------------------------------------------------------------------------
 // Lombok
@@ -55,11 +65,9 @@ tasks.withType<Javadoc>().configureEach {
 // classpath. This is why a domain module can use @Value or @Getter and still be
 // a zero-dependency artifact at runtime.
 // -----------------------------------------------------------------------------
-val libs = the<org.gradle.accessors.dm.LibrariesForLibs>()
-
 dependencies {
-    compileOnly(libs.lombok)
-    annotationProcessor(libs.lombok)
-    testCompileOnly(libs.lombok)
-    testAnnotationProcessor(libs.lombok)
+    compileOnly libs.findLibrary('lombok').get()
+    annotationProcessor libs.findLibrary('lombok').get()
+    testCompileOnly libs.findLibrary('lombok').get()
+    testAnnotationProcessor libs.findLibrary('lombok').get()
 }

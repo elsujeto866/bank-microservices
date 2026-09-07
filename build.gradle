@@ -8,19 +8,17 @@
 // =============================================================================
 
 plugins {
-    base
+    id 'base'
 }
 
 // Referenced by task PATH rather than by reaching into sibling projects. Poking
 // at another project's task objects at configuration time breaks the
 // configuration cache and blocks Isolated Projects later on.
-tasks.register("architectureCheck") {
-    group = "verification"
-    description = "Runs every architectural fitness function across the build."
-    dependsOn(
-        ":services:customer-service:domain:verifyDomainPurity",
-        ":services:customer-service:application:verifyApplicationPurity",
-        ":services:account-service:domain:verifyDomainPurity",
-        ":services:account-service:application:verifyApplicationPurity",
-    )
+tasks.register('architectureCheck') {
+    group = 'verification'
+    description = 'Runs every architectural fitness function across the build.'
+    dependsOn ':services:customer-service:domain:verifyDomainPurity',
+              ':services:customer-service:application:verifyApplicationPurity',
+              ':services:account-service:domain:verifyDomainPurity',
+              ':services:account-service:application:verifyApplicationPurity'
 }
