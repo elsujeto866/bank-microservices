@@ -2,8 +2,12 @@
 # Version Catalog — the single source of truth for every external dependency.
 #
 # Why this file exists: without it, versions get hardcoded across six build
-# scripts and drift apart. One place to look, one place to bump, and the IDE
-# gives you type-safe accessors (libs.spring.boot.bom) instead of magic strings.
+# scripts and drift apart. One place to look, one place to bump.
+#
+# Note how few versions are pinned here. Everything Spring Boot knows about —
+# Hibernate, Jackson, Flyway, PostgreSQL, Testcontainers, JUnit — comes from the
+# BOM, aligned and tested together. Pinning those by hand is how you end up with
+# a Jackson that half the stack disagrees with.
 # =============================================================================
 
 [versions]
@@ -11,6 +15,11 @@ java = "21"
 springBoot = "4.1.1"
 lombok = "1.18.48"
 archunit = "1.5.0"
+# Pinned deliberately. Spring Boot 4 manages Testcontainers 2.0.5, but the 2.x
+# line has so far published only the core artifact — the postgresql and
+# junit-jupiter modules exist on the 1.x line alone. Forced through an
+# enforcedPlatform so core and modules cannot end up on different majors.
+testcontainers = "1.21.3"
 openapiGenerator = "7.14.0"
 
 [libraries]
@@ -21,6 +30,8 @@ spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies"
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
 
 # Plugin artifacts consumed by buildSrc convention plugins. Declaring them as
 # libraries (not [plugins]) is what lets buildSrc put them on its classpath.
