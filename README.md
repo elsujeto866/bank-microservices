@@ -1,4 +1,10 @@
-# bank-microservices
+
+
+Unit tests and integration tests are separate tasks on purpose.  needs
+nothing but a JVM and runs in milliseconds, so it can run on every save;
+ starts containers and takes tens of seconds. Merging them
+punishes the fast tests for the slow ones, and a suite that needs Docker to run
+at all is a suite people stop running locally.# bank-microservices
 
 Event-driven banking backend built as two independent microservices, developed
 as a technical exercise at **Senior** level.
@@ -116,9 +122,16 @@ Tear it down with `docker compose down -v` (`-v` also drops the volumes).
 ### Build
 
 ```bash
-./gradlew build                # compile + test + architecture checks
+./gradlew build                # compile + unit tests + architecture checks
 ./gradlew architectureCheck    # fitness functions only
+./gradlew integrationTest      # container-backed tests (requires Docker)
 ```
+
+Unit tests and integration tests are separate tasks on purpose. `test` needs
+nothing but a JVM and runs in milliseconds, so it can run on every save;
+`integrationTest` starts containers and takes tens of seconds. Merging them
+punishes the fast tests for the slow ones — and a suite that needs Docker to
+run at all is a suite people stop running locally.
 
 ---
 
@@ -156,7 +169,8 @@ Built in reviewable stages, one pull request each.
 | 1.5 | Migrate the build from the Kotlin DSL to the Groovy DSL | ✅ |
 | 2 | `customer-service` — domain model, test-first | ✅ |
 | 3 | `customer-service` — use cases and ports, test-first | ✅ |
-| 4 | `customer-service` — adapters: REST, JPA, error handling | ⬜ |
+| 4 | `customer-service` — persistence: JPA, outbox, Flyway, schedulers | ✅ |
+| 4.5 | `customer-service` — web: REST controllers, error handling | ⬜ |
 | 5 | `account-service` — domain and use cases (TDD), F2/F3 balance rules | ⬜ |
 | 6 | `account-service` — adapters | ⬜ |
 | 7 | Kafka: events, transactional outbox, idempotent consumer, DLQ | ⬜ |

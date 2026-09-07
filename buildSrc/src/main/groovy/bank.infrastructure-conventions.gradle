@@ -29,3 +29,40 @@ dependencies {
     // package naming, annotation placement, "no cycles", and so on.
     testImplementation libs.findLibrary('archunit-junit5').get()
 }
+
+// -----------------------------------------------------------------------------
+// Unit tests and integration tests are different tasks, on purpose.
+//
+// `test` runs everything that needs nothing but a JVM: milliseconds, no Docker,
+// safe to run on every save. `integrationTest` runs the *IT classes, which start
+// containers and take tens of seconds.
+//
+// Merging them punishes the fast tests for the slow ones. A suite that needs
+// Docker to run at all is a suite people stop running locally — and a test
+// nobody runs is worse than no test, because it also lies about coverage.
+// -----------------------------------------------------------------------------
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    filter {
+        excludeTestsMatching '*IT'
+    }
+}
+
+tasks.register('integrationTest', Test) {
+    group = 'verification'
+    description = 'Runs the *IT tests. Requires a working Docker environment (Testcontainers).'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching '*IT'
+    }
+
+    // Containers are slow and the results depend on a running daemon, so this
+    // task is never considered up to date.
+    outputs.upToDateWhen { false }
+
+    shouldRunAfter tasks.named('test')
+}

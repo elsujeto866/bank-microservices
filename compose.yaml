@@ -23,7 +23,7 @@ services:
   # we are designing against.
   # ---------------------------------------------------------------------------
   customer-db:
-    image: postgres:18.6-alpine
+    image: postgres:17
     container_name: bank-customer-db
     environment:
       POSTGRES_DB: customer_db
@@ -43,7 +43,7 @@ services:
       start_period: 10s
 
   account-db:
-    image: postgres:18.6-alpine
+    image: postgres:17
     container_name: bank-account-db
     environment:
       POSTGRES_DB: account_db

@@ -1,0 +1,25 @@
+// =============================================================================
+// Conventions for a module that is an actual runnable Spring Boot application.
+//
+// Applied on top of the contract-first conventions, so an application module
+// gets: the hexagon rules, the generated API interfaces, and a bootable jar.
+// =============================================================================
+
+plugins {
+    id 'bank.openapi-conventions'
+    id 'org.springframework.boot'
+}
+
+tasks.named('bootJar', org.springframework.boot.gradle.tasks.bundling.BootJar) {
+    // Layered jar: dependencies, the Spring Boot loader and application classes
+    // land in separate Docker layers. Dependencies change rarely, application
+    // code changes on every commit — so a rebuild ships a few hundred kilobytes
+    // instead of a hundred megabytes.
+    layered {
+        enabled = true
+    }
+
+    // The generated API interfaces compile in their own source set, so they are
+    // not part of `main` output and have to be added explicitly.
+    from sourceSets.generated.output
+}

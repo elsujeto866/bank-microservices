@@ -1,13 +1,47 @@
 plugins {
-    id 'bank.openapi-conventions'
+    id 'bank.spring-application-conventions'
 }
 
 dependencies {
     implementation project(':services:customer-service:application')
 
-    // Required by the code generated from the contract.
+    // Web — required by the code generated from the contract.
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Persistence. JPA is blocking; every call through it is offloaded to a
+    // dedicated scheduler so it never touches the Netty event loop (ADR-0003).
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Schema migrations. The schema is versioned code, not something applied by
+    // hand on a Friday afternoon.
+    //
+    // The STARTER, not the bare flyway-core. Spring Boot 4 split its
+    // autoconfiguration into per-technology modules, so flyway-core alone puts
+    // the library on the classpath with nothing to switch it on: the
+    // application starts, Flyway never runs, and Hibernate then fails with
+    // "missing table". Silent until the first startup against an empty schema.
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+
+    // BCrypt only. The full spring-boot-starter-security would switch on a
+    // filter chain and an authentication flow this service does not have; we
+    // want the password encoder and nothing else.
+    implementation 'org.springframework.security:spring-security-crypto'
+
+    // Health, metrics and readiness probes.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+
+    // enforcedPlatform, not platform: it must WIN over the Spring Boot BOM's
+    // Testcontainers 2.0.5, or core lands on 2.x and the modules on 1.x.
+    testImplementation enforcedPlatform(libs.testcontainers.bom)
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
 }
 
 openApiGenerate {

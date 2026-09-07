@@ -1,0 +1,119 @@
+spring:
+  application:
+    name: customer-service
+
+  # ---------------------------------------------------------------------------
+  # Datasource
+  # ---------------------------------------------------------------------------
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/customer_db}
+    username: ${DB_USERNAME:customer_user}
+    password: ${DB_PASSWORD:customer_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # THE number in this file.
+      #
+      # SchedulerConfiguration reads this exact property to size the scheduler
+      # that every JDBC call runs on, so the thread pool and the connection pool
+      # cannot drift apart (ADR-0003). Change it here and both move together.
+      #
+      # 20 is a starting point, not a law. The usual formula is
+      # `connections = cores * 2 + effective_spindles`; on modern hardware
+      # anything past ~30 usually makes throughput worse, because the database
+      # spends more time context-switching between sessions than answering them.
+      # A pool that is too large fails in a way that looks like the database
+      # being slow.
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      # Fail fast rather than hang. A caller waiting 30 seconds for a connection
+      # has already been abandoned by its own client.
+      connection-timeout: 3000
+      # Shorter than any sane database or firewall idle timeout, so we close
+      # connections before something else closes them out from under us.
+      max-lifetime: 900000
+      idle-timeout: 300000
+      pool-name: customer-hikari
+
+  # ---------------------------------------------------------------------------
+  # JPA
+  # ---------------------------------------------------------------------------
+  jpa:
+    hibernate:
+      # validate, never update, and never create-drop.
+      #
+      # `update` looks convenient and is how a production column quietly changes
+      # type, or fails to be dropped, with no migration anybody can review or
+      # roll back. `validate` makes Hibernate check that the mapping matches the
+      # schema Flyway produced and refuse to start if it does not — a startup
+      # failure instead of silent corruption.
+      ddl-auto: validate
+    open-in-view: false
+    # ^ Off, and it matters here more than usual. open-in-view holds a database
+    # connection for the whole request so lazy loading can happen in the view
+    # layer. On a reactive stack that is doubly wrong: it pins a connection
+    # across thread hops it was never designed to survive. Spring logs a warning
+    # when this is left at its default; we set it explicitly so the decision is
+    # visible rather than merely correct.
+    properties:
+      hibernate:
+        jdbc:
+          # Batches inserts and updates instead of one round trip each. The
+          # outbox writes several rows per transaction, so this is not academic.
+          batch_size: 30
+        order_inserts: true
+        order_updates: true
+        # Timezone pinned to UTC so a timestamp means the same thing regardless
+        # of where the container happens to run.
+        jdbc.time_zone: UTC
+    show-sql: false
+
+  # ---------------------------------------------------------------------------
+  # Flyway
+  # ---------------------------------------------------------------------------
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    # Refuse to start if a migration file has been edited after being applied.
+    # An already-applied migration is history; changing it means two
+    # environments silently have different schemas.
+    validate-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+
+# Finish in-flight requests before the process exits. Without it, a rolling
+# deploy answers a handful of requests with a connection reset — rare enough to
+# be dismissed as a network blip, frequent enough to matter.
+spring.lifecycle.timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only what is needed. The full set of actuator endpoints on a public
+        # port is an information disclosure, not a feature.
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.bank.customer: ${LOG_LEVEL:INFO}
+    # Uncomment to see the generated SQL and its bound parameters. Left off by
+    # default: SQL logging at INFO in production is both a performance cost and
+    # a way to write customer data into log files.
+    # org.hibernate.SQL: DEBUG
+    # org.hibernate.orm.jdbc.bind: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} - %msg%n"
